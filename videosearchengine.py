@@ -8,6 +8,8 @@ import moondream as md
 from PIL import Image
 import rapidfuzz
 import matplotlib.pyplot as plt
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
 
 def search_and_download():
     search = "super mario movie trailer"
@@ -101,9 +103,13 @@ def caption_scenes(output_folder="scenes", json_file="scene_captions.json", mode
 
 def search_captions_with_word(json_file, output_folder, threshold=80):
     with open(json_file, "r") as f:
-        captions = json.load(f)
-    
-    query = input("Search the scene using a word: ").strip().lower()
+        captions = json.load(f)    
+    all_words = set()
+    for caption in captions.values():
+        all_words.update(caption.split()) 
+    caption_completer = WordCompleter(list(all_words), ignore_case=True)
+    session = PromptSession()
+    query = session.prompt("Search the scene using a word: ", completer=caption_completer).strip().lower()
     results = rapidfuzz.process.extract(query, captions.values(), scorer=rapidfuzz.fuzz.partial_ratio, score_cutoff=threshold)
     found_scenes = [
         int(scene_number) for scene_number, caption in captions.items()
