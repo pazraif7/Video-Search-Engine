@@ -3,6 +3,11 @@ import yt_dlp
 from scenedetect import VideoManager, SceneManager
 from scenedetect.detectors import ContentDetector
 import cv2
+import json
+import moondream as md 
+from PIL import Image
+import rapidfuzz
+import matplotlib.pyplot as plt
 
 def search_and_download():
     search = "super mario movie trailer"
@@ -55,12 +60,99 @@ def detect_scenes(video_file, output_folder="scenes", threshold=30.0):
     finally:
         video_manager.release()
 
+def caption_scenes(output_folder="scenes", json_file="scene_captions.json", model_path="moondream-2b-int8.mf"):
+    if os.path.exists(json_file):
+        print(f"Captions already exist in {json_file}. Skipping captioning.")
+        return
+
+    try:
+        model = md.vl(model=model_path)
+        print("Model initialized successfully.")
+    except Exception as e:
+        print(f"Error initializing model: {e}")
+        return
+
+    captions = {}
+
+    for image_file in sorted(os.listdir(output_folder), key=lambda x: int(x.split('_')[1].split('.')[0])):
+        if not image_file.endswith(('.jpg')): 
+            continue
+
+        try:
+            scene_number = int(image_file.split('_')[1].split('.')[0])
+        except ValueError:
+            print(f"Skipping invalid file: {image_file}")
+            continue
+
+        image_path = os.path.join(output_folder, image_file)
+        print(f"Generating caption for scene {scene_number}...")
+
+        try:
+            image = Image.open(image_path)
+            encoded_image = model.encode_image(image)
+            caption = model.caption(encoded_image)["caption"]
+            captions[scene_number] = caption
+            print(f"Scene {scene_number} caption: {caption}")
+        except Exception as e:
+            print(f"Error generating caption for scene {scene_number}: {e}")
+            captions[scene_number] = "Error generating caption"
+        with open(json_file, "w") as f:
+            json.dump(captions, f, indent=4)
+
+def search_captions_with_word(json_file, output_folder, threshold=80):
+    with open(json_file, "r") as f:
+        captions = json.load(f)
+    
+    query = input("Search the scene using a word: ").strip().lower()
+    results = rapidfuzz.process.extract(query, captions.values(), scorer=rapidfuzz.fuzz.partial_ratio, score_cutoff=threshold)
+    found_scenes = [
+        int(scene_number) for scene_number, caption in captions.items()
+        if any(caption == result[0] and result[1] >= threshold for result in results)
+    ]
+
+    if found_scenes:
+        print(f"Found scenes: {found_scenes}")
+        scene_images = [
+            os.path.join(output_folder, f"scene_{scene_number}.jpg") for scene_number in found_scenes
+        ]
+        create_collage(scene_images, output_file="collage.png")
+        print("Collage created and saved as 'collage.png'.")    
+    else:
+        print("No scenes found matching the query.")
+
+
+def create_collage(scene_images, output_file="collage.png"):
+    images = [cv2.imread(image_path) for image_path in scene_images]
+    num_images = len(images)
+    if num_images == 0:
+        print("No images to create a collage.")
+        return
+
+    grid_cols = min(num_images, 5)
+    grid_rows = (num_images + grid_cols - 1) // grid_cols
+
+    fig, axes = plt.subplots(grid_rows, grid_cols, figsize=(15, 5))
+    axes = axes.flatten()
+
+    for ax, image, scene_path in zip(axes, images, scene_images):
+        ax.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        ax.axis("off")
+
+    for ax in axes[num_images:]:
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig(output_file)
+    print(f"Collage saved to {output_file}.")
+    plt.show()
+
 
 def main():
     video_file = search_and_download()
     print("Starting scene detection...")
     detect_scenes(video_file)
-
+    caption_scenes()
+    search_captions_with_word(json_file="scene_captions.json", output_folder="scenes", threshold=80)
     
 if __name__ == "__main__":
     main()
